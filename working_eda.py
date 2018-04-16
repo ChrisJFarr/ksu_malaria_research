@@ -109,6 +109,12 @@ x_train = x_scaler.fit_transform(vars_df)
 x_columns = list(vars_df.columns)
 y_train = y_scaler.fit_transform(df.IC50.values.reshape(-1, 1))
 
+# Forward stepwise feature selection, with the main target
+
+# Forward stepwise feature selection, with target as validation
+# From what we knew prior
+
+
 # Build model
 # NOTE: Gridsearch with Lasso didn't work well, "best" model output all 0's for coefficients
 model = Lasso(alpha=0.25, max_iter=100000, tol=1e-5)
