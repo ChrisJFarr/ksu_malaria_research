@@ -38,21 +38,12 @@ Scaling the feature and creating a new target that is an average of the potency 
 * Can we augment the data set with predicted negative data (molecules expected to be inactive) to improve our machine
 learning models? TODO Next step here
 
-Dimension reduction techniques
-1. Load and combine entire dataset including decoys
-* Tried PCA with .25% dim len, computer crashed
-* Can't perform transformations
-* Try nnet to predict target OSM-S-106?
-3. Extract feature importance (try different methods)
-4. Plot to show potent, non-potent, un-tested, and decoys with top negative dimensions
+Approach:
+* Full data performance compared to compounds only; no dimension reduction
+* Compare model performance by testing the OSM-S-106 prediction accuracy
+* Full: Neural network, XGBoost
+* Small: Lasso regression, nnet, LDA, Tree boosting
 
-# Take features selected above and entire dataset
-# Train multiple models: hold out the OCM-S-106 as the test set
-# Assume all decoys have 100 IC50
-
-Notes:
-    * Are there features dropped due to adding decoys that prove as predictors in methods without decoys?
-# Try same methods with transforming the IC50 by the method described in.. need to find the paper/website again
 """
 import pandas as pd
 from sklearn.decomposition import KernelPCA
@@ -63,30 +54,37 @@ from scipy.stats import skewtest
 import os
 import pandas as pd
 import gc
-from par_support import par_transformations
-from joblib import Parallel, delayed
-from time import time
 import par_support
 from importlib import reload
 reload(par_support)
+
+# combine = True
+combine = False
 """ Load and combine all datasets """
-file_list = os.listdir("data")
-file_list = [f for f in file_list if "decoys" in f and f.endswith(".csv")]
+if combine:
+    file_list = os.listdir("data")
+    file_list = [f for f in file_list if "decoys" in f and f.endswith(".csv")]
 
-df = pd.read_csv("data/" + file_list[0])
-for f in file_list[1:]:
-    df = df.append(pd.read_csv("data/" + f))
-df["IC50"] = 100
-# Combine with Series3_6.15.17_padel.csv
-tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
-tests.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
+    df = pd.read_csv("data/" + file_list[0])
+    for f in file_list[1:]:
+        df = df.append(pd.read_csv("data/" + f))
+    df["IC50"] = 100
+    # Combine with Series3_6.15.17_padel.csv
+    tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
+    tests.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
 
-df = df.append(tests).reset_index(drop=True)
-y_data = df.pop("IC50")
-x_data = df.dropna(axis=1)
-del df
-gc.collect()
-
+    df = df.append(tests).reset_index(drop=True)
+    y_data = df.pop("IC50")
+    x_data = df.dropna(axis=1)
+    del df
+    gc.collect()
+else:
+    df = pd.read_csv("data/Series3_6.15.17_padel.csv")
+    df.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
+    y_data = df.pop("IC50")
+    x_data = df.dropna(axis=1)
+    del df
+    gc.collect()
 
 """ Preprocessing Variables """
 # Get dummy vars: filter to int type, convert to object, pass to get_dummies.
@@ -104,9 +102,80 @@ cont_vars_df = cont_vars_df.loc[:, cont_vars_df.apply(
 
 # Combine datasets
 x_data = pd.concat([cat_vars_df, cont_vars_df], axis=1)
+y_data
+
+# Separate untested compounds
+untested_i = [i == -1 for i in y_data.values]
+full_train_i = [i != -1 for i in y_data.values]
+x_untested = x_data.loc[untested_i, :].reset_index(drop=True)
+x_data = x_data.loc[full_train_i, :].reset_index(drop=True)
+y_untested = y_data.loc[untested_i].reset_index(drop=True)
+y_data = y_data.loc[full_train_i].reset_index(drop=True)
+
+# Scale data
+x_scaler, y_scaler = StandardScaler(), StandardScaler()
+x_norm = x_scaler.fit_transform(x_data)
+y_norm = y_scaler.fit_transform(y_data.values.reshape(-1, 1))
+
+# Create train/test splits
+assert -1 not in np.unique(y_data), "Need to remove untested compounds from data"
+potent_i = np.argwhere([i < 10 for i in y_data])
+potent_i = list(np.squeeze(potent_i))  # Flatten array to list of indexes
+
+# Create cv indices, one set of train/test for each potent compound
+potent_cv = [(np.array([i for i in x_data.index if i != test_i]),
+              np.array([test_i]))
+             for test_i in potent_i]
+
+assert potent_cv[0][1] not in potent_cv[0][0], "Data leak occured"
+# Import models
+# Compare out of box performances
+from sklearn.model_selection import cross_val_predict
+from sklearn.linear_model import LinearRegression, Lasso
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_squared_error
+
+models = {"linear_regression": LinearRegression(),
+          "lasso": Lasso(alpha=0.01),
+          "gradient_boosting_regressor": GradientBoostingRegressor()
+          }
+for model in list(models.keys()):
+
+    # Hyper-param tune
+
+    pred = cross_val_predict(models[model], x_norm, y_norm, cv=len(x_data), n_jobs=7)
+    y_pred = y_scaler.inverse_transform(pred)
+
+    # Calculate potency accuracy (mean_squared_error)
+    error = np.sqrt(mean_squared_error(y_data[potent_i], y_pred[potent_i]))
+
+    # Write results to file
+    with open("results.txt", "a") as f:
+        f.writelines("Model: %s, Error: %s \n" % (model, error))
+        f.close()
+
+# Grid search GradientBoostingRegressor
+from sklearn.model_selection import GridSearchCV
+params = {"learning_rate": [0.01, 0.02, 0.3],
+          "n_estimators": [300, 400, 500],
+          "max_depth": [6, 7, 8],
+          "min_samples_split": [2, 3, 4]}
+model = GradientBoostingRegressor(random_state=0)
+np.array(potent_cv)
+
+grid = GridSearchCV(model, params, scoring="neg_mean_squared_error", n_jobs=7, cv=potent_cv)
+grid.fit(x_norm, y_data)
+
+model = grid.best_estimator_
+
+pred = cross_val_predict(model, x_norm, y_data, cv=x_norm.shape[0], n_jobs=7)
+error = np.sqrt(mean_squared_error(y_data[potent_i], pred[potent_i]))
 
 
-
-
-
+# Inverse transform and plot
+plt.scatter(y_data, np.squeeze(pred))
+plt.xlabel("actual")
+plt.ylabel("pred")
+plt.show()
+# Perform cross validation of all potent compounds when comparing performance
 
