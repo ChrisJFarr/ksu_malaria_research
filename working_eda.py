@@ -125,6 +125,7 @@ y_norm = y_scaler.fit_transform(y_data.values.reshape(-1, 1))
 from keras import layers, optimizers, callbacks
 from keras import Model
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error
 
 # Goals: predict OSM-S-106 is the best compound yet discovered.
 # Use main target as validation
@@ -142,20 +143,25 @@ x_train_s = x_scaler.fit_transform(x_train)
 x_valid_s = x_scaler.transform(x_valid)
 
 # # LSTM (crazy attempt)
-# x_train_s = x_train_s.reshape(-1, x_data.shape[1], 1)
+x_train_s = x_train_s.reshape(-1, 1, x_data.shape[1])
+x_valid_s = x_valid_s.reshape(-1, 1, x_data.shape[1])
 
 y_train_s = y_scaler.fit_transform(y_train)
 y_valid_s = y_scaler.transform(y_valid)
 
 # Build simple dense model
-d1_in = layers.Input(shape=(x_train.shape[1],))
-d1 = layers.LSTM(units=150)(d1_in)
+d1_in = layers.Input(shape=(1, x_train_s.shape[2]))  # , x_train_s.shape[2]
+d1 = layers.LSTM(150)(d1_in)
 d1 = layers.BatchNormalization()(d1)
 d1 = layers.Activation("relu")(d1)
 
-d2 = layers.Dense(150)(d1)
+# d1 = layers.Dropout(0.8)(d1)
+
+d2 = layers.Dense(10)(d1)
 d2 = layers.BatchNormalization()(d2)
 d2 = layers.Activation("relu")(d2)
+
+# d2 = layers.Dropout(0.8)(d2)
 
 d3 = layers.Dense(1)(d2)
 d3 = layers.BatchNormalization()(d3)
@@ -164,24 +170,27 @@ d3 = layers.Activation("sigmoid")(d3)
 model = Model(inputs=d1_in, outputs=d3)
 model.summary()
 
-optimizer = optimizers.Adamax(lr=0.001)
+optimizer = optimizers.Adamax(lr=0.0001)
 model.compile(optimizer=optimizer, loss="mse")
 
 # Callbacks
-early_stopping = callbacks.EarlyStopping(patience=10)
-checkpointer = callbacks.ModelCheckpoint("model.best.weight.hdf5", save_weights_only=True, save_best_only=True)
+# early_stopping = callbacks.EarlyStopping(patience=10)
+# checkpointer = callbacks.ModelCheckpoint("model.best.weight.hdf5", save_weights_only=True, save_best_only=True)
 
 # Train model
 # history = model.fit(x_train_s, y_train_s, batch_size=5, epochs=100, callbacks=[early_stopping, checkpointer]
 #                     , validation_data=(x_valid_s, y_valid_s), verbose=2)
-history = model.fit(x_train_s, y_train_s, batch_size=5, epochs=50, verbose=2)
+history = model.fit(x_train_s, y_train_s, steps_per_epoch=1, epochs=10, verbose=2)
 
 # model.load_weights("model.best.weight.hdf5")
 
 # How well can it predict OSM-S-106
-print(model.predict(x_train))
-print(model.predict(x_valid))
+print(y_scaler.inverse_transform(model.predict(x_train_s)))
+print(y_scaler.inverse_transform(model.predict(x_valid_s)))
 
+# Train MSE
+print(np.sqrt(mean_squared_error(y_train, y_scaler.inverse_transform(model.predict(x_train_s)))))
+# Potent MSE
 
 # Inverse transform and plot
 plt.scatter(y_data, np.squeeze(pred))
