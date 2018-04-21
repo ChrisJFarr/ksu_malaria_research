@@ -117,59 +117,70 @@ x_scaler, y_scaler = StandardScaler(), StandardScaler()
 x_norm = x_scaler.fit_transform(x_data)
 y_norm = y_scaler.fit_transform(y_data.values.reshape(-1, 1))
 
-# Create train/test splits
-assert -1 not in np.unique(y_data), "Need to remove untested compounds from data"
-potent_i = np.argwhere([i < 10 for i in y_data])
-potent_i = list(np.squeeze(potent_i))  # Flatten array to list of indexes
 
-# Create cv indices, one set of train/test for each potent compound
-potent_cv = [(np.array([i for i in x_data.index if i != test_i]),
-              np.array([test_i]))
-             for test_i in potent_i]
-
-assert potent_cv[0][1] not in potent_cv[0][0], "Data leak occured"
 # Import models
-# Compare out of box performances
-from sklearn.model_selection import cross_val_predict
-from sklearn.linear_model import LinearRegression, Lasso
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.metrics import mean_squared_error
+# Neural nets
+# Try architecture varieties: dense, conv, lstm
+# Start small
+from keras import layers, optimizers, callbacks
+from keras import Model
+from sklearn.preprocessing import MinMaxScaler
 
-models = {"linear_regression": LinearRegression(),
-          "lasso": Lasso(alpha=0.01),
-          "gradient_boosting_regressor": GradientBoostingRegressor()
-          }
-for model in list(models.keys()):
+# Goals: predict OSM-S-106 is the best compound yet discovered.
+# Use main target as validation
+# Create train/validation splits
+x_train = x_data.iloc[1:, :].values
+y_train = y_data.iloc[1:].values.reshape(-1, 1)
+x_valid = x_data.iloc[0, :].values.reshape(-1, x_data.shape[1])
+y_valid = np.array(y_data.iloc[0]).reshape(-1, 1)
 
-    # Hyper-param tune
+# Scale inputs
+x_scaler = MinMaxScaler(feature_range=(0.01, 0.99))
+y_scaler = MinMaxScaler(feature_range=(0.05, 0.99))
 
-    pred = cross_val_predict(models[model], x_norm, y_norm, cv=len(x_data), n_jobs=7)
-    y_pred = y_scaler.inverse_transform(pred)
+x_train_s = x_scaler.fit_transform(x_train)
+x_valid_s = x_scaler.transform(x_valid)
 
-    # Calculate potency accuracy (mean_squared_error)
-    error = np.sqrt(mean_squared_error(y_data[potent_i], y_pred[potent_i]))
+# # LSTM (crazy attempt)
+# x_train_s = x_train_s.reshape(-1, x_data.shape[1], 1)
 
-    # Write results to file
-    with open("results.txt", "a") as f:
-        f.writelines("Model: %s, Error: %s \n" % (model, error))
-        f.close()
+y_train_s = y_scaler.fit_transform(y_train)
+y_valid_s = y_scaler.transform(y_valid)
 
-# Grid search GradientBoostingRegressor
-from sklearn.model_selection import GridSearchCV
-params = {"learning_rate": [0.01, 0.02, 0.3],
-          "n_estimators": [300, 400, 500],
-          "max_depth": [6, 7, 8],
-          "min_samples_split": [2, 3, 4]}
-model = GradientBoostingRegressor(random_state=0)
-np.array(potent_cv)
+# Build simple dense model
+d1_in = layers.Input(shape=(x_train.shape[1],))
+d1 = layers.LSTM(units=150)(d1_in)
+d1 = layers.BatchNormalization()(d1)
+d1 = layers.Activation("relu")(d1)
 
-grid = GridSearchCV(model, params, scoring="neg_mean_squared_error", n_jobs=7, cv=potent_cv)
-grid.fit(x_norm, y_data)
+d2 = layers.Dense(150)(d1)
+d2 = layers.BatchNormalization()(d2)
+d2 = layers.Activation("relu")(d2)
 
-model = grid.best_estimator_
+d3 = layers.Dense(1)(d2)
+d3 = layers.BatchNormalization()(d3)
+d3 = layers.Activation("sigmoid")(d3)
 
-pred = cross_val_predict(model, x_norm, y_data, cv=x_norm.shape[0], n_jobs=7)
-error = np.sqrt(mean_squared_error(y_data[potent_i], pred[potent_i]))
+model = Model(inputs=d1_in, outputs=d3)
+model.summary()
+
+optimizer = optimizers.Adamax(lr=0.001)
+model.compile(optimizer=optimizer, loss="mse")
+
+# Callbacks
+early_stopping = callbacks.EarlyStopping(patience=10)
+checkpointer = callbacks.ModelCheckpoint("model.best.weight.hdf5", save_weights_only=True, save_best_only=True)
+
+# Train model
+# history = model.fit(x_train_s, y_train_s, batch_size=5, epochs=100, callbacks=[early_stopping, checkpointer]
+#                     , validation_data=(x_valid_s, y_valid_s), verbose=2)
+history = model.fit(x_train_s, y_train_s, batch_size=5, epochs=50, verbose=2)
+
+# model.load_weights("model.best.weight.hdf5")
+
+# How well can it predict OSM-S-106
+print(model.predict(x_train))
+print(model.predict(x_valid))
 
 
 # Inverse transform and plot
@@ -178,4 +189,6 @@ plt.xlabel("actual")
 plt.ylabel("pred")
 plt.show()
 # Perform cross validation of all potent compounds when comparing performance
+
+
 
