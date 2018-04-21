@@ -56,6 +56,7 @@ import pandas as pd
 import gc
 import par_support
 from importlib import reload
+
 reload(par_support)
 
 # combine = True
@@ -95,6 +96,15 @@ cat_vars_df = pd.get_dummies(
 # Impute or remove? (for now remove any columns with nan)
 cont_vars_df = x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'float64']].dropna(axis=1)
 
+# Add transformations
+cont_vars_df.loc[:, "AATSC7c_exp"] = cont_vars_df.loc[:, "AATSC7c"].apply(np.exp)
+cont_vars_df.loc[:, "AATSC2i_sqrt"] = cont_vars_df.loc[:, "AATSC2i"].apply(np.sqrt).fillna(.15)  # neg become nan, fill with low number
+cont_vars_df.loc[:, "AATSC2i_exp2"] = cont_vars_df.loc[:, "AATSC2i"].apply(np.exp2)
+cont_vars_df.loc[:, "VE1_Dt_exp"] = cont_vars_df.loc[:, "VE1_Dt"].apply(np.exp)
+
+# Ensure no nas
+assert not sum(x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'int64']].isna().sum()), "Null values found in cont"
+
 # Assume skewed if we can reject the null hypothesis with 95% certainty
 # Remove any skewed features after adding transformations
 cont_vars_df = cont_vars_df.loc[:, cont_vars_df.apply(
@@ -104,100 +114,21 @@ cont_vars_df = cont_vars_df.loc[:, cont_vars_df.apply(
 x_data = pd.concat([cat_vars_df, cont_vars_df], axis=1)
 y_data
 
-# Separate untested compounds
-untested_i = [i == -1 for i in y_data.values]
-full_train_i = [i != -1 for i in y_data.values]
-x_untested = x_data.loc[untested_i, :].reset_index(drop=True)
-x_data = x_data.loc[full_train_i, :].reset_index(drop=True)
-y_untested = y_data.loc[untested_i].reset_index(drop=True)
-y_data = y_data.loc[full_train_i].reset_index(drop=True)
+# Select features from lasso PCA notebook
+features = ["PCA nAtom_43", "nHeavyAtom_27", "nX_0", "nBase_0", "nBase_1",
+            "C1SP3_1", "nHssNH_1", "nssNH_1", "nsssN_2", "nHBDon_Lipinski_1",
+            "MPC2_43", "MPC3_41", "MPC10_72", "nRotB_4", "WPOL_30", "WPOL_41",
+            "Zagreb_146", "AATSC7c_exp", "AATSC2i_sqrt", "AATSC2i_exp2",
+            "VE1_Dt_exp"]
+assert len(features) == 21
 
-# Scale data
-x_scaler, y_scaler = StandardScaler(), StandardScaler()
-x_norm = x_scaler.fit_transform(x_data)
-y_norm = y_scaler.fit_transform(y_data.values.reshape(-1, 1))
+# Scale
+
+# PCA
+
+# Model
 
 
-# Import models
-# Neural nets
-# Try architecture varieties: dense, conv, lstm
-# Start small
-from keras import layers, optimizers, callbacks
-from keras import Model
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error
-
-# Goals: predict OSM-S-106 is the best compound yet discovered.
-# Use main target as validation
-# Create train/validation splits
-x_train = x_data.iloc[1:, :].values
-y_train = y_data.iloc[1:].values.reshape(-1, 1)
-x_valid = x_data.iloc[0, :].values.reshape(-1, x_data.shape[1])
-y_valid = np.array(y_data.iloc[0]).reshape(-1, 1)
-
-# Scale inputs
-x_scaler = MinMaxScaler(feature_range=(0.01, 0.99))
-y_scaler = MinMaxScaler(feature_range=(0.05, 0.99))
-
-x_train_s = x_scaler.fit_transform(x_train)
-x_valid_s = x_scaler.transform(x_valid)
-
-# # LSTM (crazy attempt)
-x_train_s = x_train_s.reshape(-1, 1, x_data.shape[1])
-x_valid_s = x_valid_s.reshape(-1, 1, x_data.shape[1])
-
-y_train_s = y_scaler.fit_transform(y_train)
-y_valid_s = y_scaler.transform(y_valid)
-
-# Build simple dense model
-d1_in = layers.Input(shape=(1, x_train_s.shape[2]))  # , x_train_s.shape[2]
-d1 = layers.LSTM(150)(d1_in)
-d1 = layers.BatchNormalization()(d1)
-d1 = layers.Activation("relu")(d1)
-
-# d1 = layers.Dropout(0.8)(d1)
-
-d2 = layers.Dense(10)(d1)
-d2 = layers.BatchNormalization()(d2)
-d2 = layers.Activation("relu")(d2)
-
-# d2 = layers.Dropout(0.8)(d2)
-
-d3 = layers.Dense(1)(d2)
-d3 = layers.BatchNormalization()(d3)
-d3 = layers.Activation("sigmoid")(d3)
-
-model = Model(inputs=d1_in, outputs=d3)
-model.summary()
-
-optimizer = optimizers.Adamax(lr=0.0001)
-model.compile(optimizer=optimizer, loss="mse")
-
-# Callbacks
-# early_stopping = callbacks.EarlyStopping(patience=10)
-# checkpointer = callbacks.ModelCheckpoint("model.best.weight.hdf5", save_weights_only=True, save_best_only=True)
-
-# Train model
-# history = model.fit(x_train_s, y_train_s, batch_size=5, epochs=100, callbacks=[early_stopping, checkpointer]
-#                     , validation_data=(x_valid_s, y_valid_s), verbose=2)
-history = model.fit(x_train_s, y_train_s, steps_per_epoch=1, epochs=10, verbose=2)
-
-# model.load_weights("model.best.weight.hdf5")
-
-# How well can it predict OSM-S-106
-print(y_scaler.inverse_transform(model.predict(x_train_s)))
-print(y_scaler.inverse_transform(model.predict(x_valid_s)))
-
-# Train MSE
-print(np.sqrt(mean_squared_error(y_train, y_scaler.inverse_transform(model.predict(x_train_s)))))
-# Potent MSE
-
-# Inverse transform and plot
-plt.scatter(y_data, np.squeeze(pred))
-plt.xlabel("actual")
-plt.ylabel("pred")
-plt.show()
-# Perform cross validation of all potent compounds when comparing performance
 
 
 
