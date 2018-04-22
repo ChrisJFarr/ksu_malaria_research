@@ -59,24 +59,55 @@ from importlib import reload
 
 reload(par_support)
 
+# Problems: features selected in lasso aren't all in any single decoy set
+# Solution: Perform lasso selection with only features available across all decoys
+# Select features on subset
+# Perform prediction on entire dataset with selected features
+
+# Select features from lasso PCA
+features = ["nAtom_43", "nHeavyAtom_27", "nX_0", "nBase_0", "nBase_1",
+            "C1SP3_1", "nHssNH_1", "nssNH_1", "nsssN_2", "nHBDon_Lipinski_1",
+            "MPC2_43", "MPC3_41", "MPC10_72", "nRotB_4", "WPOL_30", "WPOL_41",
+            "Zagreb_146", "AATSC7c_exp", "AATSC2i_sqrt", "AATSC2i_exp2",
+            "VE1_Dt_exp"]
+orig_features = [feat.partition("_")[0] for feat in features]
+orig_features[-1] += "_Dt"
+
 # combine = True
-combine = False
+combine = True
 """ Load and combine all datasets """
 if combine:
     file_list = os.listdir("data")
     file_list = [f for f in file_list if "decoys" in f and f.endswith(".csv")]
-
-    df = pd.read_csv("data/" + file_list[0])
-    for f in file_list[1:]:
-        df = df.append(pd.read_csv("data/" + f))
+    # df = pd.DataFrame()  # Initialize for IDE warnings
+    for f in file_list:
+        df = None
+        # Only append decoys with all of the desired features
+        new = pd.read_csv("data/" + f)
+        new.dropna(axis=1, inplace=True)
+        if all([feat in new.columns for feat in orig_features]):
+            if df is None:
+                df = new.copy()
+            else:
+                df = df.append(new)
     df["IC50"] = 100
+    df.shape
+    del df
+    # df.dropna(axis=0, inplace=True)  # Remove rows with missing values
     # Combine with Series3_6.15.17_padel.csv
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
     tests.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
 
     df = df.append(tests).reset_index(drop=True)
     y_data = df.pop("IC50")
-    x_data = df.dropna(axis=1)
+
+    all([feat in df.columns for feat in orig_features])
+
+    df.isna().sum()
+
+    x_data = df.dropna(axis=1)  # Remove columns with missing values after combining
+    all([feat in x_data.columns for feat in orig_features])
+
     del df
     gc.collect()
 else:
@@ -93,12 +124,17 @@ assert not sum(x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'int64']].isna(
 cat_vars_df = pd.get_dummies(
     x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'int64']].astype('O'))
 
+cat_vars_df.columns
+
 # Impute or remove? (for now remove any columns with nan)
 cont_vars_df = x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'float64']].dropna(axis=1)
 
+# Remove rows with nans in transformation features
+
 # Add transformations
 cont_vars_df.loc[:, "AATSC7c_exp"] = cont_vars_df.loc[:, "AATSC7c"].apply(np.exp)
-cont_vars_df.loc[:, "AATSC2i_sqrt"] = cont_vars_df.loc[:, "AATSC2i"].apply(np.sqrt).fillna(.15)  # neg become nan, fill with low number
+# neg become nan, fill with low number (.15)
+cont_vars_df.loc[:, "AATSC2i_sqrt"] = cont_vars_df.loc[:, "AATSC2i"].apply(np.sqrt).fillna(.15)
 cont_vars_df.loc[:, "AATSC2i_exp2"] = cont_vars_df.loc[:, "AATSC2i"].apply(np.exp2)
 cont_vars_df.loc[:, "VE1_Dt_exp"] = cont_vars_df.loc[:, "VE1_Dt"].apply(np.exp)
 
@@ -107,22 +143,19 @@ assert not sum(x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'int64']].isna(
 
 # Assume skewed if we can reject the null hypothesis with 95% certainty
 # Remove any skewed features after adding transformations
-cont_vars_df = cont_vars_df.loc[:, cont_vars_df.apply(
-    lambda x: skewtest(x)[1] > .05).values]
+# cont_vars_df = cont_vars_df.loc[:, cont_vars_df.apply(
+#     lambda x: skewtest(x)[1] > .05).values]
 
 # Combine datasets
 x_data = pd.concat([cat_vars_df, cont_vars_df], axis=1)
 y_data
 
-# Select features from lasso PCA notebook
-features = ["PCA nAtom_43", "nHeavyAtom_27", "nX_0", "nBase_0", "nBase_1",
-            "C1SP3_1", "nHssNH_1", "nssNH_1", "nsssN_2", "nHBDon_Lipinski_1",
-            "MPC2_43", "MPC3_41", "MPC10_72", "nRotB_4", "WPOL_30", "WPOL_41",
-            "Zagreb_146", "AATSC7c_exp", "AATSC2i_sqrt", "AATSC2i_exp2",
-            "VE1_Dt_exp"]
-assert len(features) == 21
+assert all([feat in x_data.columns for feat in features])
+check = x_data.loc[:, features]
 
 # Scale
+scaler = StandardScaler()
+x_data = scaler.fit_transform(x_data)
 
 # PCA
 
