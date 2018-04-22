@@ -75,7 +75,7 @@ def load_full_dataset():
             df = new.copy()
         else:
             df = df.append(new)
-    df["IC50"] = 100
+    df["IC50"] = 100  # Try 250 too
     # df.dropna(axis=0, inplace=True)  # Remove rows with missing values
     # Combine with Series3_6.15.17_padel.csv
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
@@ -188,6 +188,8 @@ pca = KernelPCA(n_components=None, kernel="linear", random_state=0, n_jobs=3)
 pca_out = pca.fit_transform(compound_x.loc[:, pred_indicators])
 
 """ Extract feature importance from PCA components """
+# Try at least two approaches to compare importance outcomes
+# XGBOOST and another
 from sklearn.linear_model import LinearRegression
 model = Lasso(alpha=0.01, max_iter=100000, tol=1e-5)
 model.fit(pca_out, y_train)
@@ -196,27 +198,26 @@ np.max(model.coef_)
 
 """ Plot top 2 coefficients (most important features """
 
-
-
-
-len(pred_indicators)
-
-print("Number of predictors: %s" %len(pred_indicators))
+print("Number of predictors: %s" % len(pred_indicators))
 # Assume skewed if we can reject the null hypothesis with 95% certainty
 # Remove any skewed features after adding transformations
-
-
-# Combine datasets
-
-y_data
-
-assert all([feat in x_data.columns for feat in features])
-check = x_data.loc[:, features]
-
-# Scale
-scaler = StandardScaler()
-x_data = scaler.fit_transform(x_data)
 
 # PCA
 
 # Model
+# Can we make an accurate (define accurate?) prediction on OSM-S-106 without it in train set
+# If yes, then what features are most important?
+# If no, then how do we need to adjust our approach assuming this compound is unique
+
+# Can adding the decoys improve the predictability of the potent compounds?
+# If yes, then document and share the steps taken to produce the dataset
+# If no, have others had success doing this? Are there more varieties to try?
+
+
+# Steven
+# Predictive model to find anything greater than or less than 50
+# Find the optimal number of principal components using visualization/eda
+
+# Next steps
+#
+
