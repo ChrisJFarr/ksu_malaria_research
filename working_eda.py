@@ -64,7 +64,9 @@ def load_full_dataset():
             df = new.copy()
         else:
             df = df.append(new)
+            
     df["IC50"] = 250  # Try 100 and 250
+
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
     tests.dropna(axis=0, inplace=True, subset=["IC50"])
 
@@ -182,57 +184,67 @@ print("Adding non-linear features to compound dataset....")
 for feature in x_data.columns[x_data.dtypes == 'float64']:
     x_data = add_transformations(x_data, feature)
 # Drop any new columns with NaN due to improper transformation
-x_data.replace([np.inf, -np.inf], np.nan, inplace=True)
-x_data.dropna(axis=1, inplace=True)
-assert not sum(x_data.isna().sum()), "Unexpected nulls found"
 
-# How well does random forest predict potency?
-print("Tuning random forest on compound dataset....")
-model = RandomForestClassifier(random_state=0, class_weight="balanced")
-params = {"n_estimators": [400, 500, 600],
-          "criterion": ["entropy", "gini"],
-          "max_features": list(np.arange(.01, 1., .05)) + ["auto", "sqrt", "log2"],
-          "max_depth": [None, 2, 3, 4],
-          "min_samples_split": [2, 3, 4],
-          "bootstrap": [True, False],
-          "class_weight": ["balanced", "balanced_subsample", None]}
-grid = GridSearchCV(estimator=model, param_grid=params, cv=5, scoring="neg_log_loss", n_jobs=3)
+compound_x.replace([np.inf, -np.inf], np.nan, inplace=True)
+compound_x.dropna(axis=1, inplace=True)
+# Drop name
+compound_x.drop(["Name"], axis=1, inplace=True)
+# Perform lasso selection on compounds
+# Normalize variables
+x_scaler = StandardScaler()
+y_scaler = StandardScaler()
 
-grid.fit(x_data, y_class)
-print(grid.best_params_)
-best_model = grid.best_estimator_
-predict = cross_val_predict(best_model, x_data, y_class, cv=5, method="predict")
+x_train = x_scaler.fit_transform(compound_x)
+x_columns = list(compound_x.columns)
+y_train = y_scaler.fit_transform(compound_y.values.reshape(-1, 1))
 
-# Analyze CV predict
-# Compare to predict without CV
-from sklearn.metrics import confusion_matrix
-print(confusion_matrix(y_class, predict, labels=[1, 0]))
-print(np.array([["TP", "FN"], ["FP", "TN"]]))
+""" Perform lasso selection """
+from sklearn.linear_model import Lasso
+model = Lasso(alpha=0.25, max_iter=100000, tol=1e-5)
+model.fit(x_train, y_train)
+# Extract coefficients
+positive_coeffs = len([c for c in model.coef_ if c > 0])
+neg_coeffs = len([c for c in model.coef_ if c < 0])
+# All non-zero are selected as predictive indicators
+pred_indicators = [f for f, c in zip(x_columns, model.coef_) if c != 0]
 
-best_model.fit(x_data, y_class)
-best_model.predict_proba(x_data)
-feat_importance = best_model.feature_importances_
-best_features = [f for i, f in sorted(zip(feat_importance, x_data.columns), reverse=True) if i != 0]
-len(best_features)
+""" Build PCA """
+from sklearn.decomposition import KernelPCA
+# Build Polynomial Pricipal Components, include all dimensions
+pca = KernelPCA(n_components=None, kernel="linear", random_state=0, n_jobs=3)
+pca_out = pca.fit_transform(compound_x.loc[:, pred_indicators])
 
-# Create best_features in full dataset
-print("Adding best features to full dataset....")
-for feat in best_features:
-    transformation = feat.split("_")[-1]
-    base_feature = feat.replace("_" + transformation, '')
-    if transformation in avail_transformations:
-        full_x = add_single_transformation(full_x, base_feature, transformation)
+""" Extract feature importance from PCA components """
+# Try at least two approaches to compare importance outcomes
+# XGBOOST and another
+from sklearn.linear_model import LinearRegression
+model = Lasso(alpha=0.01, max_iter=100000, tol=1e-5)
+model.fit(pca_out, y_train)
 
-# Create prediction using full set
-x_train = full_x.loc[:, best_features]
-x_train.replace([np.inf, -np.inf], np.nan, inplace=True)
-imputer = Imputer(copy=False)
-x_train = imputer.fit_transform(x_train)
-y_train = np.squeeze([int(y_val < 10) for y_val in full_y])
-assert not np.isnan(x_train).sum(), "Unexpected nulls found: x_train"
-assert not sum([val == np.nan for val in y_train]), "Unexpected nulls found: y_train"
-# Train best model on full dataset
-best_model.fit(x_train, y_train)
+np.max(model.coef_)
 
-# Test performance on compounds
-best_model.predict_proba(x_data.loc[:, best_features])
+""" Plot top 2 coefficients (most important features """
+
+print("Number of predictors: %s" % len(pred_indicators))
+# Assume skewed if we can reject the null hypothesis with 95% certainty
+# Remove any skewed features after adding transformations
+
+# PCA
+
+# Model
+# Can we make an accurate (define accurate?) prediction on OSM-S-106 without it in train set
+# If yes, then what features are most important?
+# If no, then how do we need to adjust our approach assuming this compound is unique
+
+# Can adding the decoys improve the predictability of the potent compounds?
+# If yes, then document and share the steps taken to produce the dataset
+# If no, have others had success doing this? Are there more varieties to try?
+
+
+# Steven
+# Predictive model to find anything greater than or less than 50
+# Find the optimal number of principal components using visualization/eda
+
+# Next steps
+#
+
