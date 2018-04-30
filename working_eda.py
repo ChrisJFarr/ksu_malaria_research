@@ -19,16 +19,11 @@ learning models?
 that would be best for model training? In this way, ML would be recommending future experiments. Apply the ML model to 
 set of well-characterized drugs. 
 * Which cluster most closely with OSM-S-106? Would this provide clues as to the mechanism of OSM-S-106? 
-How well do more advanced ML models perform over simple methods like multiple linear regression, SVM, and random forest? 
-
-
+How well do more advanced ML models perform over simple methods like multiple linear regression, SVM, and random forest?
 
 What is the activate compound (OSM-S-106) targeting within the malaria parasite?
 Leverage experiment results and molecular descriptors of effective drug.
 What dimensions are accurate predictors of "potency".
-
-
-
 
 Is this feature a predictor of potency?
 Scaling the feature and creating a new target that is an average of the potency times the presence of the characteristic
@@ -46,19 +41,13 @@ Approach:
 
 """
 import pandas as pd
-from sklearn.decomposition import KernelPCA
-from matplotlib import pyplot as plt
 import numpy as np
-from sklearn.preprocessing import StandardScaler
 from scipy.stats import skewtest
 import os
-import pandas as pd
-import gc
-import par_support
-from importlib import reload
-
-reload(par_support)
-
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_predict
+from sklearn.model_selection import GridSearchCV
+from sklearn.preprocessing import Imputer
 
 """ Load and combine all datasets """
 
@@ -75,11 +64,11 @@ def load_full_dataset():
             df = new.copy()
         else:
             df = df.append(new)
-    df["IC50"] = 100  # Try 250 too
-    # df.dropna(axis=0, inplace=True)  # Remove rows with missing values
-    # Combine with Series3_6.15.17_padel.csv
+            
+    df["IC50"] = 250  # Try 100 and 250
+
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
-    tests.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
+    tests.dropna(axis=0, inplace=True, subset=["IC50"])
 
     df = df.append(tests).reset_index(drop=True)
     y_data = df.pop("IC50")
@@ -87,9 +76,10 @@ def load_full_dataset():
     return x_data, y_data
 
 
-def load_compound_datasets():
+def load_compound_dataset():
     df = pd.read_csv("data/Series3_6.15.17_padel.csv")
-    df.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
+    # df.IC50.fillna(-1, inplace=True)  # Mark potential compounds with -1
+    df.dropna(axis=0, inplace=True, subset=["IC50"])
     y_data = df.pop("IC50")
     x_data = df.dropna(axis=1)
     return x_data, y_data
@@ -98,11 +88,11 @@ def load_compound_datasets():
 def preprocess_variables(x_data, remove_skewed=False):
     """ Preprocessing Variables """
     # Get dummy vars: filter to int type, convert to object, pass to get_dummies.
-    assert not sum(x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'int64']].isna().sum()), "Null values found in cat"
+    assert not sum(x_data[x_data.columns[x_data.dtypes == 'int64']].isna().sum()), "Null values found in cat"
     cat_vars_df = pd.get_dummies(
-        x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'int64']].astype('O'))
+        x_data[x_data.columns[x_data.dtypes == 'int64']].astype('O'))
     # Impute or remove? (for now remove any columns with nan)
-    cont_vars_df = x_data[x_data.columns[x_data.iloc[:, :].dtypes == 'float64']].dropna(axis=1)
+    cont_vars_df = x_data[x_data.columns[x_data.dtypes == 'float64']].dropna(axis=1)
     # Remove skewed
     if remove_skewed:
         cont_vars_df = cont_vars_df.loc[:, cont_vars_df.apply(
@@ -141,23 +131,60 @@ def add_transformations(data, feat):
     return data
 
 
+def add_single_transformation(data, base_feat, transformation):
+    if transformation == "log":
+        data.loc[:, base_feat + "_log"] = data.loc[:, base_feat].apply(np.log)
+    elif transformation == "log2":
+        data.loc[:, base_feat + "_log2"] = data.loc[:, base_feat].apply(np.log2)
+    elif transformation == "log10":
+        data.loc[:, base_feat + "_log10"] = data.loc[:, base_feat].apply(np.log10)
+    elif transformation == "cubert":
+        data.loc[:, base_feat + "_cubert"] = data.loc[:, base_feat].apply(
+            lambda x: np.power(x, 1 / 3))
+    elif transformation == "sqrt":
+        data.loc[:, base_feat + "_sqrt"] = data.loc[:, base_feat].apply(np.sqrt)
+    elif transformation == "exp":
+        data.loc[:, base_feat + "_exp"] = data.loc[:, base_feat].apply(np.exp)
+    elif transformation == "exp2":
+        data.loc[:, base_feat + "_exp2"] = data.loc[:, base_feat].apply(np.exp2)
+    elif transformation == "cube":
+        data.loc[:, base_feat + "_cube"] = data.loc[:, base_feat].apply(
+            lambda x: np.power(x, 3))  # cube
+    elif transformation == "sq":
+        data.loc[:, base_feat + "_sq"] = data.loc[:, base_feat].apply(np.square)
+    else:
+        print("No transformation performed, check `transformation` input: %s" % transformation)
+    return data
+
+
+avail_transformations = ["log", "log2", "log10", "cubert", "sqrt", "exp", "exp2", "cube", "sq"]
+
 # Problem: features selected in lasso aren't all in any single decoy set
 # Solution: Perform lasso selection with only features available across all decoys
 # Load in full dataset
 full_x, full_y = load_full_dataset()
-# Remove x columns with NA's
-full_x.dropna(axis=1, inplace=True)
+# Preprocess variables
+full_x = preprocess_variables(full_x)
 # Extract list of available columns
-avail_columns = full_x.columns
+full_columns = full_x.columns
+print("Loading in compound dataset....")
 # Read in compound dataset
-compound_x, compound_y = load_compound_datasets()
+compound_x, compound_y = load_compound_dataset()
+# Preprocess
+compound_x = preprocess_variables(compound_x)
+# Find intersecting features
+avail_columns = compound_x.columns.intersection(full_columns)
 # Select features on subset
-compound_x = compound_x.loc[:, avail_columns]
-assert not sum(compound_x.isna().sum()), "Unexpected nulls found"
+x_data = compound_x.loc[:, avail_columns]
+y_data = compound_y.copy()
+# Create binary variable
+y_class = np.squeeze([int(y_val < 10) for y_val in y_data])
+print("Adding non-linear features to compound dataset....")
 # Add all transformations on compound data
-for feature in compound_x.columns[compound_x.iloc[:, :].dtypes == 'float64']:
-    compound_x = add_transformations(compound_x, feature)
+for feature in x_data.columns[x_data.dtypes == 'float64']:
+    x_data = add_transformations(x_data, feature)
 # Drop any new columns with NaN due to improper transformation
+
 compound_x.replace([np.inf, -np.inf], np.nan, inplace=True)
 compound_x.dropna(axis=1, inplace=True)
 # Drop name
