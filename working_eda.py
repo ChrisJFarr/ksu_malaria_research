@@ -176,7 +176,7 @@ avail_columns = compound_x.columns.intersection(full_columns)
 x_data = compound_x.loc[:, avail_columns]
 y_data = compound_y.copy()
 # Create binary variable
-y_class = np.squeeze([int(y_val < 10) for y_val in y_data])
+y_class = np.squeeze([int(y_val <= 10) for y_val in y_data])
 print("Adding non-linear features to compound dataset....")
 # Add all transformations on compound data
 for feature in x_data.columns[x_data.dtypes == 'float64']:
@@ -186,53 +186,28 @@ x_data.replace([np.inf, -np.inf], np.nan, inplace=True)
 x_data.dropna(axis=1, inplace=True)
 assert not sum(x_data.isna().sum()), "Unexpected nulls found"
 
-# How well does random forest predict potency?
-print("Tuning random forest on compound dataset....")
-model = RandomForestClassifier(random_state=0, class_weight="balanced")
-params = {"n_estimators": [400, 500, 600],
-          "criterion": ["entropy", "gini"],
-          "max_features": list(np.arange(.01, 1., .05)) + ["auto", "sqrt", "log2"],
-          "max_depth": [None, 2, 3, 4],
-          "min_samples_split": [2, 3, 4],
-          "bootstrap": [True, False],
-          "class_weight": ["balanced", "balanced_subsample", None]}
-grid = GridSearchCV(estimator=model, param_grid=params, cv=5, scoring="neg_log_loss", n_jobs=3)
+# Perform classification with SVM
+from sklearn.svm import SVC
+from sklearn.model_selection import GridSearchCV, cross_val_predict
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, confusion_matrix
 
-grid.fit(x_data, y_class)
-print(grid.best_params_)
-best_model = grid.best_estimator_
-predict = cross_val_predict(best_model, x_data, y_class, cv=5, method="predict")
+model = SVC(kernel="linear", class_weight={0:1-np.mean(y_class), 1: np.mean(y_class)}, random_state=0, probability=True)
+model.fit(x_data, y_class)
 
-# Analyze CV predict
-# Compare to predict without CV
-from sklearn.metrics import confusion_matrix
-print(confusion_matrix(y_class, predict, labels=[1, 0]))
-print(np.array([["TP", "FN"], ["FP", "TN"]]))
+best_features = [f for i, f in sorted(zip(model.coef_[0], x_data.columns), reverse=True) if i != 0]
 
-best_model.fit(x_data, y_class)
-best_model.predict_proba(x_data)
-feat_importance = best_model.feature_importances_
-best_features = [f for i, f in sorted(zip(feat_importance, x_data.columns), reverse=True) if i != 0]
-len(best_features)
+accuracy_score(y_class, model.predict(x_data))
+pred = cross_val_predict(model, x_data, y_class, cv=sum(y_class), method="predict_proba")
 
-# Create best_features in full dataset
-print("Adding best features to full dataset....")
-for feat in best_features:
-    transformation = feat.split("_")[-1]
-    base_feature = feat.replace("_" + transformation, '')
-    if transformation in avail_transformations:
-        full_x = add_single_transformation(full_x, base_feature, transformation)
+# TODO Develop a cost sensitive metric
+# TODO Create augmented validation set
+# Penalize the miss more-so the higher the actual potency
 
-# Create prediction using full set
-x_train = full_x.loc[:, best_features]
-x_train.replace([np.inf, -np.inf], np.nan, inplace=True)
-imputer = Imputer(copy=False)
-x_train = imputer.fit_transform(x_train)
-y_train = np.squeeze([int(y_val < 10) for y_val in full_y])
-assert not np.isnan(x_train).sum(), "Unexpected nulls found: x_train"
-assert not sum([val == np.nan for val in y_train]), "Unexpected nulls found: y_train"
-# Train best model on full dataset
-best_model.fit(x_train, y_train)
 
-# Test performance on compounds
-best_model.predict_proba(x_data.loc[:, best_features])
+# Backward step-wise algorithm
+# https://pdfs.semanticscholar.org/00a4/7b1031b0fdb0c2b7035a51917feeb189aa26.pdf
+# Section 4 ^^
+# Compromize between speed and feature quality, remove 10% of current features every iteration
+# Validation set: consider creating an augmented dataset that is derived from the potent compounds
+
