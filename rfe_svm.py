@@ -1,45 +1,3 @@
-"""
-The most active compound is called OSM-S-106. However, we do not understand how OSM-S-106 works to kill the 
-malaria parasite. We wish to identify the target of OSM-S-106 in the parasite. <b>Knowing the target will help us create
-more potent versions of OSM-S-106.</b>
-
-We are in the process of performing experiments with OSM and KU to identify the OSM-S-106 target. Experiments are 
-slow and very expensive. We would also like to apply machine learning methods to predict potential targets. To do 
-that, we have calculated molecular descriptors, which describe chemical features of the drug candidate molecules. 
-
-We wish to find descriptors that would help predict potency (described by the "IC50").
-
-Questions we want to research: 
-* Which descriptors best predict potency? Our data set is very small. Finding an 
-effective drug is like finding a needle in a haystack. This is a common problem with scientific data sets. 
-* Can we augment the data set with predicted negative data (molecules expected to be inactive) to improve our machine
-learning models?
-* Are there certain characteristics of negative data sets that are the most useful for training? 
-* Given the limited size of the data set and the high cost of experiments, can we use ML to identify the missing data 
-that would be best for model training? In this way, ML would be recommending future experiments. Apply the ML model to 
-set of well-characterized drugs. 
-* Which cluster most closely with OSM-S-106? Would this provide clues as to the mechanism of OSM-S-106? 
-How well do more advanced ML models perform over simple methods like multiple linear regression, SVM, and random forest?
-
-What is the activate compound (OSM-S-106) targeting within the malaria parasite?
-Leverage experiment results and molecular descriptors of effective drug.
-What dimensions are accurate predictors of "potency".
-
-Is this feature a predictor of potency?
-Scaling the feature and creating a new target that is an average of the potency times the presence of the characteristic
-
-# How well can we predict the performance of the target without using it to train?
-
-* Can we augment the data set with predicted negative data (molecules expected to be inactive) to improve our machine
-learning models? TODO Next step here
-
-Approach:
-* Full data performance compared to compounds only; no dimension reduction
-* Compare model performance by testing the OSM-S-106 prediction accuracy
-* Full: Neural network, XGBoost
-* Small: Lasso regression, nnet, LDA, Tree boosting
-
-"""
 import pandas as pd
 import numpy as np
 from scipy.stats import skewtest
@@ -64,9 +22,7 @@ def load_full_dataset():
             df = new.copy()
         else:
             df = df.append(new)
-            
     df["IC50"] = 250  # Try 100 and 250
-
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
     tests.dropna(axis=0, inplace=True, subset=["IC50"])
 
@@ -179,12 +135,12 @@ x_data = compound_x.loc[:, avail_columns]
 y_data = compound_y.copy()
 # Create binary variable
 y_class = np.squeeze([int(y_val <= 10) for y_val in y_data])
+
 print("Adding non-linear features to compound dataset....")
 # Add all transformations on compound data
 for feature in x_data.columns[x_data.dtypes == 'float64']:
     x_data = add_transformations(x_data, feature)
 # Drop any new columns with NaN due to improper transformation
-
 x_data.replace([np.inf, -np.inf], np.nan, inplace=True)
 x_data.dropna(axis=1, inplace=True)
 assert not sum(x_data.isna().sum()), "Unexpected nulls found"
@@ -215,3 +171,6 @@ pred = cross_val_predict(model, x_data, y_class, cv=sum(y_class), method="predic
 # Validation set: consider creating an augmented dataset that is derived from the potent compounds
 
 
+# TODO Geometric mean for model comparison
+
+# http://cs229.stanford.edu/notes/cs229-notes3.pdf
