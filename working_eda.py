@@ -64,7 +64,9 @@ def load_full_dataset():
             df = new.copy()
         else:
             df = df.append(new)
+            
     df["IC50"] = 250  # Try 100 and 250
+
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
     tests.dropna(axis=0, inplace=True, subset=["IC50"])
 
@@ -182,6 +184,7 @@ print("Adding non-linear features to compound dataset....")
 for feature in x_data.columns[x_data.dtypes == 'float64']:
     x_data = add_transformations(x_data, feature)
 # Drop any new columns with NaN due to improper transformation
+
 x_data.replace([np.inf, -np.inf], np.nan, inplace=True)
 x_data.dropna(axis=1, inplace=True)
 assert not sum(x_data.isna().sum()), "Unexpected nulls found"
@@ -210,4 +213,5 @@ pred = cross_val_predict(model, x_data, y_class, cv=sum(y_class), method="predic
 # Section 4 ^^
 # Compromize between speed and feature quality, remove 10% of current features every iteration
 # Validation set: consider creating an augmented dataset that is derived from the potent compounds
+
 
