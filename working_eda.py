@@ -64,7 +64,7 @@ def load_full_dataset():
             df = new.copy()
         else:
             df = df.append(new)
-            
+
     df["IC50"] = 250  # Try 100 and 250
 
     tests = pd.read_csv("data/Series3_6.15.17_padel.csv")
@@ -179,6 +179,107 @@ x_data = compound_x.loc[:, avail_columns]
 y_data = compound_y.copy()
 # Create binary variable
 y_class = np.squeeze([int(y_val <= 10) for y_val in y_data])
+
+# Smote
+from custom_pipe_helper import SMOTER
+
+import auto
+
+smote = SMOTE()
+
+check = smote.fit(x_data, y_class)
+smote.fit_sample()
+check = smote.sample(x_data, y_class)
+
+check[0].shape
+check[1]
+
+# Create folds
+# For each fold
+# SMOTE the train data
+# Train model
+# Evaluate model
+
+from sklearn.ensemble import AdaBoostClassifier
+from imblearn.over_sampling import SMOTE
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import confusion_matrix
+import itertools as it
+from sklearn.metrics import roc_auc_score
+from sklearn.utils.class_weight import compute_sample_weight
+from imblearn.under_sampling import RandomUnderSampler
+
+# Custom grid search for best params with SMOTE on train
+params = {"a_SMOTE_k_neighbors": [2, 3, 4],
+          "b_SMOTE_m_neighbors": [9, 10, 11],
+          "c_model_n_estimators": [35, 40, 45],
+          "d_model_learning_rate": [0.05, 0.075],
+          "smote": [True, False],
+          "downsample": [False, 1, 2, 3, 4]}
+all_names = sorted(params)  # TODO remove sorted but ensure correct order
+combinations = it.product(*(params[Name] for Name in all_names))
+
+# Initialize params
+best_score = -np.inf
+best_params = None
+
+for param_values in combinations:
+    param_dict = dict(zip(all_names, param_values))
+
+    model = AdaBoostClassifier(random_state=0, learning_rate=param_dict.get("d_model_learning_rate"),
+                               n_estimators=param_dict.get("c_model_n_estimators"))
+    smote = SMOTE(random_state=0, k_neighbors=param_dict.get("a_SMOTE_k_neighbors"),
+                  m_neighbors=param_dict.get("b_SMOTE_m_neighbors"))
+    kfold = StratifiedKFold(n_splits=sum(y_class), shuffle=True, random_state=0)
+    prediction_df = pd.DataFrame(columns=["prediction"])
+    scores = []
+    for train, test in kfold.split(x_data, y_class):
+        # Split into train/test
+        x_train, y_train = x_data.iloc[train], y_class[train]
+        x_test, y_test = x_data.iloc[test], y_class[test]
+        assert sum(y_test) == 1, "Ensure only one positive class is in test per iteration"
+        # Perform SMOTE transformation on train
+        if param_dict.get("smote"):
+            x_train, y_train = smote.fit_sample(x_train, y_train)
+        # Downsample randomly
+        if param_dict.get("downsample"):
+            negative_n = len(y_train) - sum(y_train)
+            positive_n = sum(y_train)
+            balance = min(1, param_dict.get("downsample") * (positive_n / negative_n))
+            negative_n *= balance
+            negative_n = int(negative_n)
+            down_sampler = RandomUnderSampler(ratio={0: negative_n, 1: positive_n}, random_state=0)
+            x_train, y_train = down_sampler.fit_sample(x_train, y_train)
+        model.fit(x_train, y_train)
+        prediction = model.predict(x_test)
+        # sample_weight = compute_sample_weight("balanced", y_train)
+        scores.append(roc_auc_score(y_test, prediction))
+    # Calculate scores for parameters
+    params_score = np.mean(scores)
+    # Test new score against best
+    if params_score > best_score:
+        # Store the best
+        best_parms = param_dict
+        best_score = params_score
+
+
+
+check = {"a": 0, "b": 4}
+
+check2 = check
+
+check2.get("a")
+del check
+# TODO Save for implementation
+prediction = model.predict(x_test)
+prediction_df = prediction_df.append(pd.DataFrame({"prediction": prediction}, index=test))
+prediction_df.sort_index(inplace=True)
+prediction_df = prediction_df.astype(int)
+
+
+print(confusion_matrix(y_class, prediction_df, labels=[1, 0]))
+print(np.array([["TP", "FN"], ["FP", "TN"]]))
+
 print("Adding non-linear features to compound dataset....")
 # Add all transformations on compound data
 for feature in x_data.columns[x_data.dtypes == 'float64']:
@@ -195,7 +296,8 @@ from sklearn.model_selection import GridSearchCV, cross_val_predict
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix
 
-model = SVC(kernel="linear", class_weight={0:1-np.mean(y_class), 1: np.mean(y_class)}, random_state=0, probability=True)
+model = SVC(kernel="linear", class_weight={0: 1 - np.mean(y_class), 1: np.mean(y_class)}, random_state=0,
+            probability=True)
 model.fit(x_data, y_class)
 
 best_features = [f for i, f in sorted(zip(model.coef_[0], x_data.columns), reverse=True) if i != 0]
@@ -213,5 +315,3 @@ pred = cross_val_predict(model, x_data, y_class, cv=sum(y_class), method="predic
 # Section 4 ^^
 # Compromize between speed and feature quality, remove 10% of current features every iteration
 # Validation set: consider creating an augmented dataset that is derived from the potent compounds
-
-

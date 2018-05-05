@@ -1,6 +1,10 @@
 import numpy as np
 import pandas as pd
-
+from sklearn.ensemble import AdaBoostClassifier
+from imblearn.over_sampling import SMOTE
+from sklearn.model_selection import StratifiedKFold
+import itertools as it
+from sklearn.metrics import roc_auc_score
 """
 start = time()
 results_par = Parallel(n_jobs=7)(delayed(par_support.par_transformations)(cont_vars_df.loc[:, [feat]].copy()) for feat in cont_vars_df.columns)
@@ -40,3 +44,4 @@ def par_transformations(data):
     if feature_df.max() < 1000:
         data.loc[:, feat + "_sq"] = feature_df.apply(np.square)  # square
     return data
+
