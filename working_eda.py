@@ -262,8 +262,6 @@ for param_values in combinations:
         best_parms = param_dict
         best_score = params_score
 
-
-
 check = {"a": 0, "b": 4}
 
 check2 = check
@@ -315,3 +313,17 @@ pred = cross_val_predict(model, x_data, y_class, cv=sum(y_class), method="predic
 # Section 4 ^^
 # Compromize between speed and feature quality, remove 10% of current features every iteration
 # Validation set: consider creating an augmented dataset that is derived from the potent compounds
+
+
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.metrics import roc_auc_score, make_scorer
+# How well does AdaBoost predict potency?
+print("Tuning AdaBoost on compound dataset....")
+model = AdaBoostClassifier(random_state=0)
+params = {"n_estimators": [35, 40, 45],
+          "learning_rate": [0.05, 0.075]}
+grid = GridSearchCV(estimator=model, param_grid=params, cv=5, n_jobs=3, scoring=make_scorer(roc_auc_score))
+
+grid.fit(x_data, y_class)
+print(grid.best_params_)
+best_model = grid.best_estimator_

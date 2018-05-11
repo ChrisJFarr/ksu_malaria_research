@@ -2,10 +2,6 @@ import pandas as pd
 import numpy as np
 from scipy.stats import skewtest
 import os
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_predict
-from sklearn.model_selection import GridSearchCV
-from sklearn.preprocessing import Imputer
 
 """ Load and combine all datasets """
 
@@ -147,30 +143,138 @@ assert not sum(x_data.isna().sum()), "Unexpected nulls found"
 
 # Perform classification with SVM
 from sklearn.svm import SVC
-from sklearn.model_selection import GridSearchCV, cross_val_predict
+from sklearn.model_selection import cross_val_predict
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import make_scorer, roc_auc_score
+from sklearn.model_selection import cross_val_score, GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, confusion_matrix
+from joblib import Parallel, delayed
+import pickle
+from par_support import par_backward_stepwise
+from time import time
+"""
+Steps taken:
+1. Preprocess features with non-linear transformations
+2. Tune SMOTE/downsampling and model params using SVM with all features
+3. Create list of splits, already preprocessed with SMOTE/downsampling
+4. Create list of splits, w/o SMOTE/downsampling
+5. W/ SMOTE splits, start with all features, score the removal of every feature with ROC, 
+iteratively remove lowest 10%
+"""
 
-model = SVC(kernel="linear", class_weight={0:1-np.mean(y_class), 1: np.mean(y_class)}, random_state=0, probability=True)
-model.fit(x_data, y_class)
+# Forget smote, just use backward stepwise selection
+# Score using log_loss and roc (compare results)
+scaler = StandardScaler()
+# Scale the train data
+x_train = scaler.fit_transform(x_data)
+x_train = pd.DataFrame(data=x_train, columns=x_data.columns, index=x_data.index)
 
-best_features = [f for i, f in sorted(zip(model.coef_[0], x_data.columns), reverse=True) if i != 0]
+# # Set params for tuning
+model = SVC(random_state=0, probability=True)
+params = {"kernel": ["linear", "poly", "rbf", "sigmoid"],
+          "C": np.arange(0.05, 1.05, .05),
+          "class_weight": [None, "balanced"]}
 
-accuracy_score(y_class, model.predict(x_data))
-pred = cross_val_predict(model, x_data, y_class, cv=sum(y_class), method="predict_proba")
+grid = GridSearchCV(model, param_grid=params, scoring=make_scorer(roc_auc_score),
+                    cv=sum(y_class), n_jobs=7)
+grid.fit(x_train, y_class)
+print(grid.best_params_)
 
-# TODO Develop a cost sensitive metric
-# TODO Create augmented validation set
-# Penalize the miss more-so the higher the actual potency
+# Baseline should be decent
+
+scaler = StandardScaler()
+# Scale the train data
+x_train = scaler.fit_transform(x_data)
+x_train = pd.DataFrame(data=x_train, columns=x_data.columns, index=x_data.index)
+
+# TODO try with adaboost too
+# Refine params to keep somewhat consistent during process
+model = SVC(random_state=0, class_weight="balanced", kernel="sigmoid", probability=True, C=0.95)
+
+benchmark = np.mean(cross_val_score(model, x_train, y_class,
+                                    scoring=make_scorer(roc_auc_score),
+                                    cv=sum(y_class), n_jobs=7))
+
+# def par_function(features_in, x_data, y_data, model):
+#     feature_dict = dict()
+#     for out_feat in features_in:
+#         iter_features = [feat for feat in features_in if feat != out_feat]
+#         # Score the removal of feature
+#         score = np.mean(cross_val_score(model, x_data[iter_features], y_data,
+#                                         scoring=make_scorer(log_loss, needs_proba=True),
+#                                         cv=5, n_jobs=5))
+#         # Set result in feature dict
+#         feature_dict[out_feat] = score
+#     return feature_dict
 
 
-# Backward step-wise algorithm
-# https://pdfs.semanticscholar.org/00a4/7b1031b0fdb0c2b7035a51917feeb189aa26.pdf
-# Section 4 ^^
-# Compromize between speed and feature quality, remove 10% of current features every iteration
-# Validation set: consider creating an augmented dataset that is derived from the potent compounds
+# return_dict = par_function(features_in[0:5], x_train, y_class, model)
+
+# The worst features have the highest scores, select top 10 percent and remove from full list
+# sorted_features = sorted(return_dict.keys(), key=lambda x: return_dict[x], reverse=True)
+# sorted_features
+
+# Set benchmark for each round, only remove those that lowered loss, and were
+
+# Create splits for parallel jobs
+
+# Start with random selection of columns?
+starting_benchmark = benchmark
+start_time = time()
+features_in = list(x_train.columns)
+
+while True:  # While features to remove, add break
+    higher_is_better = True
+    start = time()
+    results_par = Parallel(n_jobs=7)(
+        delayed(par_backward_stepwise)(features, x_train, y_class, model) for features in np.array_split(features_in, 7))
+    norm_summary = [item for sublist in results_par for item in sublist]
+    stop = time()
+    print((stop - start))
+
+    # TODO update benchmark
+    return_dict = dict()
+    for d in results_par:
+        # assert isinstance(d, dict)
+        for k, v in d.items():
+            return_dict[k] = v
+
+    # TODO If list len is 0 then stop, no more features to remove
+    # Intuition: greater than benchmark means removal increased the loss function
+    if higher_is_better:
+        potential_removals = {feat: return_dict[feat] for feat, roc in return_dict.items() if roc >= benchmark}
+    else:
+        potential_removals = {feat: return_dict[feat] for feat, roc in return_dict.items() if roc <= benchmark}
+    if len(potential_removals) == 0:
+        print("nothing to remove")
+        break
+
+    # Remove features with the best scores (top 10%) intuition: removing them led to improved scores
+    filter_to = max(len(return_dict) - len(potential_removals), int(len(return_dict) * .90))
+    features_in = sorted(return_dict.keys(), key=lambda x: return_dict[x], reverse=higher_is_better)[:filter_to]
+
+    # Set benchmark
+    benchmark = np.mean(cross_val_score(model, x_train[features_in], y_class,
+                                        scoring=make_scorer(roc_auc_score),
+                                        cv=sum(y_class), n_jobs=7))
+
+selected_features = features_in.copy()
 
 
-# TODO Geometric mean for model comparison
+pickle.dump(selected_features, open("selected_features.pkl", "wb"))
+finish_time = time()
+print("total time %s" % str(finish_time - start_time))
+print("final score: %s" % str(benchmark))
+len(selected_features)
 
-# http://cs229.stanford.edu/notes/cs229-notes3.pdf
+# Test outcome
+
+# Analyze CV prediction performance
+predict = cross_val_predict(
+    model, x_data[selected_features], y_class, cv=sum(y_class), method="predict")
+
+print(confusion_matrix(y_class, predict, labels=[1, 0]))
+print(np.array([["TP", "FN"], ["FP", "TN"]]))
+
+# [[ 8  3]
+#  [24 12]]

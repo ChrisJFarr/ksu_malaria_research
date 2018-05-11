@@ -2,9 +2,10 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import AdaBoostClassifier
 from imblearn.over_sampling import SMOTE
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 import itertools as it
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, make_scorer, log_loss
+
 """
 start = time()
 results_par = Parallel(n_jobs=7)(delayed(par_support.par_transformations)(cont_vars_df.loc[:, [feat]].copy()) for feat in cont_vars_df.columns)
@@ -45,3 +46,15 @@ def par_transformations(data):
         data.loc[:, feat + "_sq"] = feature_df.apply(np.square)  # square
     return data
 
+
+def par_backward_stepwise(features_in, x_data, y_data, model):
+    feature_dict = dict()
+    for out_feat in features_in:
+        iter_features = [feat for feat in features_in if feat != out_feat]
+        # Score the removal of feature
+        score = np.mean(cross_val_score(model, x_data[iter_features], y_data,
+                                        scoring=make_scorer(roc_auc_score),
+                                        cv=sum(y_data)))
+        # Set result in feature dict
+        feature_dict[out_feat] = score
+    return feature_dict
