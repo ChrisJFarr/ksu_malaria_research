@@ -47,13 +47,13 @@ def par_transformations(data):
     return data
 
 
-def par_backward_stepwise(features_in, x_data, y_data, model):
+def par_backward_stepwise(features_in, x_data, y_data, model, scoring_function):
     feature_dict = dict()
     for out_feat in features_in:
-        iter_features = [feat for feat in features_in if feat != out_feat]
+        iter_features = [feat for feat in list(x_data.columns) if feat != out_feat]
         # Score the removal of feature
         score = np.mean(cross_val_score(model, x_data[iter_features], y_data,
-                                        scoring=make_scorer(roc_auc_score),
+                                        scoring=scoring_function,
                                         cv=sum(y_data)))
         # Set result in feature dict
         feature_dict[out_feat] = score
